@@ -170,7 +170,6 @@ class Game2048Env(gym.Env):
     
     def _step(self, action):
         """Execute one action"""
-        assert self.action_space.contains(action), "Invalid action"
 
         if action == 0:
             moved = self.move_up()
@@ -313,14 +312,11 @@ class loadModel:
             num_features = struct.unpack('Q', f.read(8))[0]
             
             for _ in range(num_features):
-                # Read feature name
                 name_len = struct.unpack('I', f.read(4))[0]
                 name = f.read(name_len).decode('utf-8')
                 
-                # Parse pattern from name (e.g., "4-tuple pattern 0123")
                 pattern = [int(c, 16) for c in name.split()[-1]]
                 
-                # Create pattern and load weights
                 p = Pattern(pattern)
                 size = struct.unpack('Q', f.read(8))[0]
                 weights = struct.unpack(f'{size}f', f.read(4*size))
@@ -340,13 +336,13 @@ class Node():
     
     def get_score(self):
         if self.vis == 0:
-            return 0.0
+            return float('inf')
         return self.wins / self.vis + 1.0 * math.sqrt(math.log(self.parent.vis) / self.vis)
 
 class MCTS:
     def __init__(self, model):
         self.model = model
-        self.num_simulations = 20
+        self.num_simulations = 10
     
     def search(self, env):
         root = Node()
@@ -358,7 +354,7 @@ class MCTS:
                 root.children.append(child)
         for i in range(self.num_simulations):
             node = self.select(root)
-            score = self.simulate(env, node.action)
+            score = self.simulate(copy.deepcopy(env), node.action)
             self.backpropagate(node, score)
         best_child = max(root.children, key=lambda n: n.wins)
         return best_child.action
@@ -374,9 +370,8 @@ class MCTS:
             node = max(node.children, key=lambda n: n.get_score())
         return node
 
-    def simulate(self, state, action):
-        ori = state.score
-        env = copy.deepcopy(state)
+    def simulate(self, env, action):
+        ori = env.score
         res = env._step(action)
         if res == False:
             return -float('inf')
@@ -392,4 +387,20 @@ model = loadModel('2048.bin')
 
 def get_action(state, score):
     env = Game2048Env()
-    return MCTS(model).search(env)
+    env.board = np.array(state)
+    env.score = score
+    mcts = MCTS(model)
+    return mcts.search(env)
+
+# def test():
+#     env = Game2048Env()
+#     env.reset()
+#     while not env.is_game_over():
+#         action = get_action(env.board, env.score)
+#         env.step(action)
+#         # print(env.board)
+#         # print(action)
+#     print(env.score)
+
+# if __name__ == "__main__":
+#     test()
