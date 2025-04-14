@@ -8,7 +8,19 @@ import matplotlib.pyplot as plt
 import copy
 import random
 import math
+import struct
 
+COLOR_MAP = {
+    0: "#cdc1b4", 2: "#eee4da", 4: "#ede0c8", 8: "#f2b179",
+    16: "#f59563", 32: "#f67c5f", 64: "#f65e3b", 128: "#edcf72",
+    256: "#edcc61", 512: "#edc850", 1024: "#edc53f", 2048: "#edc22e",
+    4096: "#3c3a32", 8192: "#3c3a32", 16384: "#3c3a32", 32768: "#3c3a32"
+}
+TEXT_COLOR = {
+    2: "#776e65", 4: "#776e65", 8: "#f9f6f2", 16: "#f9f6f2",
+    32: "#f9f6f2", 64: "#f9f6f2", 128: "#f9f6f2", 256: "#f9f6f2",
+    512: "#f9f6f2", 1024: "#f9f6f2", 2048: "#f9f6f2", 4096: "#f9f6f2"
+}
 
 class Game2048Env(gym.Env):
     def __init__(self):
@@ -155,6 +167,21 @@ class Game2048Env(gym.Env):
         done = self.is_game_over()
 
         return self.board, self.score, done, {}
+    
+    def _step(self, action):
+        """Execute one action"""
+        assert self.action_space.contains(action), "Invalid action"
+
+        if action == 0:
+            moved = self.move_up()
+        elif action == 1:
+            moved = self.move_down()
+        elif action == 2:
+            moved = self.move_left()
+        elif action == 3:
+            moved = self.move_right()
+        else:
+            moved = False
 
     def render(self, mode="human", action=None):
         """
@@ -231,10 +258,134 @@ class Game2048Env(gym.Env):
         # If the simulated board is different from the current board, the move is legal
         return not np.array_equal(self.board, temp_board)
 
+class Pattern:
+    def __init__(self, pattern: list, iso=8):
+        self.pattern = pattern
+        self.iso = iso
+        self.weights = None
+        self.isom = self._create_isomorphic_patterns()
+
+    def _create_isomorphic_patterns(self) -> list:
+        isom = []
+        for i in range(self.iso):
+            idx = self._rotate_mirror_pattern([0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15], i)
+            patt = [idx[p] for p in self.pattern]
+            isom.append(patt)
+        return isom
+
+    def _rotate_mirror_pattern(self, base: list, rot: int) -> list:
+        board = np.array(base, dtype=int).reshape(4,4)
+        if rot >= 4:
+            board = np.fliplr(board)
+        board = np.rot90(board, rot % 4)
+        return board.flatten().tolist()
+
+    def load_weights(self, weights: list):
+        self.weights = weights
+
+    def estimate(self, board: np.ndarray) -> float:
+        total = 0.0
+        for iso in self.isom:
+            index = self._get_index(iso, board)
+            total += self.weights[index]
+        return total
+
+    def _get_index(self, pattern: list, board: np.ndarray) -> int:
+        index = 0
+        for i, pos in enumerate(pattern):
+            tile = board[pos//4][pos%4]
+            if tile == 0: 
+                val = 0
+            else:
+                val = int(np.log2(tile))
+            index |= (val & 0xF) << (4 * i)
+        return index
+
+
+class loadModel:
+    def __init__(self, bin_path: str):
+        self.patterns = []
+        self._load_binary(bin_path)
+
+    def _load_binary(self, path: str):
+        with open(path, 'rb') as f:
+            num_features = struct.unpack('Q', f.read(8))[0]
+            
+            for _ in range(num_features):
+                # Read feature name
+                name_len = struct.unpack('I', f.read(4))[0]
+                name = f.read(name_len).decode('utf-8')
+                
+                # Parse pattern from name (e.g., "4-tuple pattern 0123")
+                pattern = [int(c, 16) for c in name.split()[-1]]
+                
+                # Create pattern and load weights
+                p = Pattern(pattern)
+                size = struct.unpack('Q', f.read(8))[0]
+                weights = struct.unpack(f'{size}f', f.read(4*size))
+                p.load_weights(weights)
+                self.patterns.append(p)
+
+    def estimate(self, board: np.ndarray) -> float:
+        return sum(p.estimate(board) for p in self.patterns)
+
+class Node():
+    def __init__(self):
+        self.children = []
+        self.parent = None
+        self.action = None
+        self.vis = 0
+        self.wins = 0.0
+    
+    def get_score(self):
+        if self.vis == 0:
+            return 0.0
+        return self.wins / self.vis + 1.0 * math.sqrt(math.log(self.parent.vis) / self.vis)
+
+class MCTS:
+    def __init__(self, model):
+        self.model = model
+        self.num_simulations = 1000
+        self.exploration_constant = 1.0
+    
+    def search(self, env):
+        root = Node()
+        for i in range(4):
+            if env.is_move_legal(i):
+                child = Node()
+                child.parent = root
+                child.action = i
+                root.children.append(child)
+        for i in range(self.num_simulations):
+            node = self.select(root)
+            score = self.simulate(env, node.action)
+            self.backpropagate(node, score)
+        best_child = max(root.children, key=lambda n: n.wins)
+        return best_child.action
+
+    def select(self, node):
+        while node.children:
+            for i in node.children:
+                if i.vis == 0:
+                    return i
+            node = max(node.children, key=lambda n: n.get_score())
+        return node
+
+    def simulate(self, state, action):
+        ori = env.score
+        env = copy.deepcopy(state)
+        res = env._step(action)
+        if res == False:
+            return -8888888
+        return self.model.estimate(env.board) - env.score + ori
+
+    def backpropagate(self, node, score):
+        while node:
+            node.vis += 1
+            node.wins += score
+            node = node.parent
+
+
 def get_action(state, score):
     env = Game2048Env()
-    return random.choice([0, 1, 2, 3]) # Choose a random action
-    
-    # You can submit this random agent to evaluate the performance of a purely random strategy.
-
-
+    return MCTS(loadModel('2048.bin')).search(env)
