@@ -345,7 +345,7 @@ class Node():
 class MCTS:
     def __init__(self, model):
         self.model = model
-        self.num_simulations = 1000
+        self.num_simulations = 20
         self.exploration_constant = 1.0
     
     def search(self, env):
@@ -385,7 +385,8 @@ class MCTS:
             node.wins += score
             node = node.parent
 
+model = loadModel('2048.bin')
 
 def get_action(state, score):
     env = Game2048Env()
-    return MCTS(loadModel('2048.bin')).search(env)
+    return MCTS(model).search(env)
