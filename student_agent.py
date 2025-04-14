@@ -182,6 +182,7 @@ class Game2048Env(gym.Env):
             moved = self.move_right()
         else:
             moved = False
+        return moved
 
     def render(self, mode="human", action=None):
         """
@@ -346,7 +347,6 @@ class MCTS:
     def __init__(self, model):
         self.model = model
         self.num_simulations = 20
-        self.exploration_constant = 1.0
     
     def search(self, env):
         root = Node()
@@ -365,9 +365,12 @@ class MCTS:
 
     def select(self, node):
         while node.children:
+            unvis = []
             for i in node.children:
                 if i.vis == 0:
-                    return i
+                    unvis.append(i)
+            if unvis:
+                return random.choice(unvis)
             node = max(node.children, key=lambda n: n.get_score())
         return node
 
@@ -376,7 +379,7 @@ class MCTS:
         env = copy.deepcopy(state)
         res = env._step(action)
         if res == False:
-            return -8888888
+            return -float('inf')
         return self.model.estimate(env.board) - env.score + ori
 
     def backpropagate(self, node, score):
