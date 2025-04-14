@@ -372,7 +372,7 @@ class MCTS:
         return node
 
     def simulate(self, state, action):
-        ori = env.score
+        ori = state.score
         env = copy.deepcopy(state)
         res = env._step(action)
         if res == False:
